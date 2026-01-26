@@ -803,12 +803,41 @@ def _foreach_map(subgraph, *args, **kwargs):
     This code allows us to inline the subgraph into the main graph lowering using the PontwiseSubgraphLowering.
     The graph outputs represent the vertically fused sequence of ops, and then register_operation_list
     below registers the buffers as horizontally fuseable in the scheduler.
+    
+    Enhancements:
+    - assert_fused: If True, verify that the operation fuses to a single kernel
+    - Handles matmul operations gracefully
     """
     from .subgraph_lowering import PointwiseSubgraphLowering
+    import torch._inductor.metrics as metrics
+    import warnings
 
     inputs = args
+    
+    # Extract assert_fused flag from kwargs
+    assert_fused = kwargs.get('assert_fused', False)
+    
+    # Track kernel count before lowering (for assert_fused validation)
+    initial_kernel_count = metrics.generated_kernel_count if assert_fused else 0
 
     gm = subgraph.graph_module
+    
+    # Check for matmul operations in the subgraph
+    has_matmul = False
+    for node in gm.graph.nodes:
+        if node.op == 'call_function' and hasattr(node.target, '__name__'):
+            op_name = node.target.__name__ if hasattr(node.target, '__name__') else str(node.target)
+            if 'mm' in op_name or 'matmul' in op_name:
+                has_matmul = True
+                if assert_fused:
+                    warnings.warn(
+                        f"foreach_map: matmul operation detected ('{op_name}'). "
+                        "Matrix multiplication may not fuse optimally in foreach_map context. "
+                        "Consider using torch.bmm or restructuring for better fusion.",
+                        RuntimeWarning,
+                        stacklevel=3
+                    )
+    
     pw_subgraph = PointwiseSubgraphLowering(gm, root_graph_lowering=V.graph)
     with V.set_graph_handler(pw_subgraph):  # type: ignore[arg-type]
         pw_subgraph.run(*inputs)
@@ -835,6 +864,21 @@ def _foreach_map(subgraph, *args, **kwargs):
             V.graph.register_operation_list(operation_list)
 
     assert all(x is not None for x in outputs)
+    
+    # Validate kernel fusion if assert_fused is True
+    if assert_fused:
+        final_kernel_count = metrics.generated_kernel_count
+        num_kernels_generated = final_kernel_count - initial_kernel_count
+        
+        if num_kernels_generated > 1:
+            raise AssertionError(
+                f"foreach_map with assert_fused=True expected a single fused kernel "
+                f"but got {num_kernels_generated} kernels. This may indicate that the "
+                f"function is too complex to fuse or contains operations that don't fuse well. "
+                f"Consider simplifying the function or removing assert_fused=True. "
+                f"(Initial: {initial_kernel_count}, Final: {final_kernel_count})"
+            )
+    
     return outputs
 
 
