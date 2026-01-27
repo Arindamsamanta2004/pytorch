@@ -805,7 +805,7 @@ def _foreach_map(subgraph, *args, **kwargs):
     below registers the buffers as horizontally fuseable in the scheduler.
     
     Enhancements:
-    - assert_fused: If True, verify that the operation fuses to a single kernel
+    - debug_assert_fused: Debug-only flag to verify the operation fuses to a single kernel
     - Handles matmul operations gracefully
     """
     from .subgraph_lowering import PointwiseSubgraphLowering
@@ -814,11 +814,11 @@ def _foreach_map(subgraph, *args, **kwargs):
 
     inputs = args
     
-    # Extract assert_fused flag from kwargs
-    assert_fused = kwargs.get('assert_fused', False)
+    # Debug-only fusion check; legacy assert_fused kept for compatibility
+    debug_assert_fused = kwargs.pop('debug_assert_fused', kwargs.pop('assert_fused', False))
     
-    # Track kernel count before lowering (for assert_fused validation)
-    initial_kernel_count = metrics.generated_kernel_count if assert_fused else 0
+    # Track kernel count before lowering (debug_assert_fused validation)
+    initial_kernel_count = metrics.generated_kernel_count if debug_assert_fused else 0
 
     gm = subgraph.graph_module
     
@@ -829,7 +829,7 @@ def _foreach_map(subgraph, *args, **kwargs):
             op_name = node.target.__name__ if hasattr(node.target, '__name__') else str(node.target)
             if 'mm' in op_name or 'matmul' in op_name:
                 has_matmul = True
-                if assert_fused:
+                if debug_assert_fused:
                     warnings.warn(
                         f"foreach_map: matmul operation detected ('{op_name}'). "
                         "Matrix multiplication may not fuse optimally in foreach_map context. "
@@ -865,17 +865,17 @@ def _foreach_map(subgraph, *args, **kwargs):
 
     assert all(x is not None for x in outputs)
     
-    # Validate kernel fusion if assert_fused is True
-    if assert_fused:
+    # Validate kernel fusion if debug_assert_fused is True
+    if debug_assert_fused:
         final_kernel_count = metrics.generated_kernel_count
         num_kernels_generated = final_kernel_count - initial_kernel_count
         
         if num_kernels_generated > 1:
             raise AssertionError(
-                f"foreach_map with assert_fused=True expected a single fused kernel "
+                f"foreach_map with debug_assert_fused=True expected a single fused kernel "
                 f"but got {num_kernels_generated} kernels. This may indicate that the "
                 f"function is too complex to fuse or contains operations that don't fuse well. "
-                f"Consider simplifying the function or removing assert_fused=True. "
+                f"Consider simplifying the function or disabling debug_assert_fused. "
                 f"(Initial: {initial_kernel_count}, Final: {final_kernel_count})"
             )
     
