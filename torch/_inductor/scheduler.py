@@ -1093,6 +1093,8 @@ class BaseSchedulerNode:
 
         if include_reads:
             for dep in self.read_writes.reads:
+                if isinstance(dep, (StarDep, WeakDep)) and dep.is_fake:
+                    continue
                 buf_accesses[dep.name].append(dep)
 
         if include_writes:
@@ -1100,7 +1102,11 @@ class BaseSchedulerNode:
                 buf_accesses[dep.name].append(dep)
 
         reads = (
-            OrderedSet(dep.name for dep in self.read_writes.reads)
+            OrderedSet(
+                dep.name
+                for dep in self.read_writes.reads
+                if not (isinstance(dep, (StarDep, WeakDep)) and dep.is_fake)
+            )
             if include_reads
             else OrderedSet()
         )
@@ -3674,7 +3680,7 @@ class Scheduler:
                     alt_name = rename(alt_name)
                     # this node must run after the prior writer
                     add_user(alt_name, node)
-                    node.add_fake_dep(StarDep(alt_name, mode=node_mode))
+                    node.add_fake_dep(StarDep(alt_name, mode=node_mode, is_fake=True))
                     for user in name_to_users[alt_name].items:
                         if user.get_name() == node.get_name():
                             continue

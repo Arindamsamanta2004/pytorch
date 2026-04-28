@@ -321,6 +321,10 @@ class StarDep(Dep):
     # pyrefly: ignore [bad-override]
     name: str
     mode: str | None = None
+    # Ordering-only dependency that does not represent a real memory access.
+    # Mirrors WeakDep.is_fake -- set True for mutation-ordering deps so that
+    # byte-counting can exclude them.
+    is_fake: bool = False
 
     # depends on the entire buffer
     @property
@@ -333,7 +337,7 @@ class StarDep(Dep):
 
     def rename(self, renames: dict[str, str]) -> "StarDep":
         if self.name in renames:
-            return StarDep(renames[self.name], self.mode)
+            return StarDep(renames[self.name], self.mode, self.is_fake)
         return self
 
     def get_free_symbol_uses(
@@ -342,6 +346,8 @@ class StarDep(Dep):
         return OrderedSet()
 
     def numbytes_hint(self) -> int:
+        if self.is_fake:
+            return 1
         try:
             return V.graph.sizevars.optimization_hint(
                 self.get_numel(), fallback=0
