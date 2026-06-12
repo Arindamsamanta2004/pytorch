@@ -3190,6 +3190,11 @@ def _max_unpoolnd(
                 f"spatial dimensions, but got output_size[{i}]={size}"
             ),
         )
+    # The native CPU implementation preserves the input's memory format via
+    # self.suggest_memory_format(), while CUDA always produces contiguous output.
+    # Match this behavior in the decomposition.
+    memory_format = utils.suggest_memory_format(self)
+
     output_shape = list(self.shape[:-dim]) + list(output_size)
     if any(s == 0 for s in output_shape):
         return self.new_zeros(output_shape)
@@ -3202,9 +3207,17 @@ def _max_unpoolnd(
     ).reshape(-1)
 
     output = self.new_zeros(output_shape)
-    return aten._unsafe_index_put(
+    result = aten._unsafe_index_put(
         output.reshape(-1), [indices_flat], self.reshape(-1), accumulate=False
     ).view(output.shape)
+
+    # The reshape/view operations above always produce contiguous output.
+    # On CPU, the native kernel preserves the input memory format, so we
+    # must convert to match. On CUDA, the native kernel always outputs
+    # contiguous, so no conversion is needed.
+    if self.device.type == "cpu" and memory_format != torch.contiguous_format:
+        result = result.contiguous(memory_format=memory_format)
+    return result
 
 
 @register_decomposition(aten.max_unpool2d)

@@ -1419,6 +1419,24 @@ class DecompOneOffTests(TestCase):
         with self.assertRaisesRegex(RuntimeError, "same dtype"):
             addmv_decomp(input, mat, vec)
 
+    @onlyCPU
+    @skipIfCrossRef
+    def test_max_unpool2d_channels_last_stride(self, device):
+        # Verify that the max_unpool2d decomposition preserves channels-last
+        # memory format on CPU, matching the native C++ implementation.
+        pool_input = torch.randn(1, 2, 3, 6, device=device).to(
+            memory_format=torch.channels_last
+        )
+        pooled, indices = torch.nn.functional.max_pool2d(
+            pool_input, kernel_size=3, padding=1, return_indices=True
+        )
+
+        ref = torch.ops.aten.max_unpool2d(pooled, indices, [3, 6])
+        res = torch._decomp.decompositions.max_unpool2d(pooled, indices, [3, 6])
+
+        self.assertEqual(ref.stride(), res.stride())
+        self.assertEqual(ref, res)
+
 
 instantiate_device_type_tests(DecompOneOffTests, globals())
 
