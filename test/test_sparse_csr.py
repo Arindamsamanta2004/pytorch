@@ -2166,6 +2166,30 @@ class TestSparseCSR(TestCase):
                 with self.assertRaisesRegex(RuntimeError, re.escape(str(msg))):
                     test(is_sparse=True)
 
+    @dtypes(*floating_and_complex_types())
+    def test_mm_zero_contraction_dim(self, device, dtype):
+        # gh-190045: sparse CSR mm with zero contraction dimension must not
+        # crash (SEGV) and should return a correctly-shaped zero tensor.
+        for m, n in [(3, 2), (1, 1), (5, 10)]:
+            crow = torch.zeros(m + 1, dtype=torch.int64, device=device)
+            col = torch.tensor([], dtype=torch.int64, device=device)
+            values = torch.tensor([], dtype=dtype, device=device)
+            mat1 = torch.sparse_csr_tensor(crow, col, values, size=(m, 0))
+            mat2 = torch.empty((0, n), dtype=dtype, device=device)
+
+            result = torch.sparse.mm(mat1, mat2)
+            self.assertEqual(result, torch.zeros(m, n, dtype=dtype, device=device))
+
+            # addmm: beta=0 should not propagate NaN from self
+            self_nan = torch.full((m, n), float('nan'), dtype=dtype, device=device)
+            result = torch.addmm(self_nan, mat1, mat2, beta=0.0, alpha=1.0)
+            self.assertEqual(result, torch.zeros(m, n, dtype=dtype, device=device))
+
+            # addmm: beta!=0 should scale self
+            self_ones = torch.ones(m, n, dtype=dtype, device=device)
+            result = torch.addmm(self_ones, mat1, mat2, beta=2.0, alpha=1.0)
+            self.assertEqual(result, 2.0 * self_ones)
+
     @sparse_compressed_nonblock_layouts()
     @dtypes(torch.float, torch.double)
     def test_add(self, device, layout, dtype):

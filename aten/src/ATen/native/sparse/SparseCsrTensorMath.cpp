@@ -647,6 +647,15 @@ Tensor& addmm_out_sparse_compressed_cpu(
     return result;
   }
 
+  if (mat1.size(1) == 0) {
+    if (beta.toComplexDouble() == 0.) {
+      result.zero_();
+    } else {
+      result.mul_(beta);
+    }
+    return result;
+  }
+
   if (sparse::impl::_is_sparse_and_zero(mat1) || sparse::impl::_is_sparse_and_zero(mat2)) {
     // According to docs, when beta==0 values in self should be ignored.
     // nans and infs should not propagate
